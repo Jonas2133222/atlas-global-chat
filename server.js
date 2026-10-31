@@ -6,6 +6,34 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+// Optional full-resolution globe maps: download at build-time or upload these JPEGs to textures/.
+const TEXTURE_FILES = ['8k_earth_daymap.jpg', '8k_earth_nightmap.jpg', '8k_earth_clouds.jpg'];
+const TEXTURE_DIR = path.join(__dirname, 'textures');
+function jpegDimensions(filename) {
+  try {
+    const data = fs.readFileSync(filename);
+    if (data.length < 130000 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+    let p = 2;
+    while (p + 9 < data.length) {
+      if (data[p] !== 0xff) { p++; continue; }
+      while (data[p] === 0xff) p++;
+      const marker = data[p++];
+      if (marker === 0xd8 || marker === 0xd9) continue;
+      if (marker === 0xda) break;
+      const length = data.readUInt16BE(p);
+      if (length < 2 || p + length > data.length) break;
+      if ([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)) {
+        return {width:data.readUInt16BE(p+5), height:data.readUInt16BE(p+3)};
+      }
+      p += length;
+    }
+  } catch {}
+  return null;
+}
+function valid8kTexture(filename) {
+  const dimensions = jpegDimensions(path.join(TEXTURE_DIR,filename));
+  return !!(dimensions && dimensions.width >= 8000 && dimensions.height >= 4000);
+}
 const COOLDOWN_MS = 1000;
 const MAX_TEXT = 280;
 const MAX_HISTORY = 75;
@@ -181,6 +209,22 @@ function createApp({ dataDir = process.env.ATLAS_DATA_DIR || path.join(__dirname
         fs.createReadStream(file).pipe(res);
       });
       return;
+    }
+    if (req.method === 'GET' && pathname === '/api/texture-status') {
+      const missing = TEXTURE_FILES.filter(filename => !valid8kTexture(filename));
+      return json(res, 200, {available: missing.length===0, missing});
+    }
+    if (req.method === 'GET' && pathname.startsWith('/textures/')) {
+      const filename = pathname.slice('/textures/'.length);
+      if (!TEXTURE_FILES.includes(filename) || !valid8kTexture(filename)) return json(res, 404, {error:'Texture is not installed.'});
+      const image = path.join(TEXTURE_DIR, filename);
+      const size = fs.statSync(image).size;
+      res.writeHead(200, {
+        'Content-Type':'image/jpeg', 'Content-Length':size,
+        'Cache-Control':'public, max-age=86400', 'X-Content-Type-Options':'nosniff',
+        'Access-Control-Allow-Origin':'*'
+      });
+      fs.createReadStream(image).pipe(res);return;
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       return json(res, 200, { ok: true, chat: 'live', cooldownMs: COOLDOWN_MS });

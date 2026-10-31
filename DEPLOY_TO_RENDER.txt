@@ -1,41 +1,40 @@
-ATLAS — RENDER DEPLOY INSTRUCTIONS
+ATLAS — ULTRA 8K + PERFORMANCE — UPDATE EXISTING RENDER SITE
 
-1. Extract ATLAS_RENDER_READY.zip. You should see server.js, package.json,
-   render.yaml, and ATLAS Global.html directly in the extracted folder.
-2. Create a new GitHub repository (e.g., atlas-global-chat).
-3. On GitHub, choose "uploading an existing file" / Add file > Upload files.
-   Open the extracted ATLAS_RENDER_READY folder, select ALL its contents
-   (including the tests folder), and upload them to the ROOT of the repository.
-   Do NOT upload the ZIP file itself, and do NOT just upload the HTML file.
-   Commit the files. If your OS hides .gitignore, that is fine.
-4. Visit dashboard.render.com > New > Web Service.
-   Connect GitHub, select your repository, and select Language: Node.
-   If entering commands manually, use:
-     Root Directory: [leave blank]
-     Build Command: npm install
-     Start Command: node server.js
-     Instance type: Free
-     Health Check Path (optional): /api/health
-   Render provides PORT. You do not need to set a port yourself.
-5. Click Create Web Service and wait until Render says Live.
-   Your website will be at https://<your-service-name>.onrender.com
-6. Check https://<your-service-name>.onrender.com/api/health
-   It should respond with {"ok":true,"chat":"live","cooldownMs":1000}.
-7. Open the main website in two devices/browsers, choose nicknames,
-   enter the SAME chat room, and send a test message.
+1) Extract ATLAS_RENDER_8K_PERFORMANCE.zip.
+2) Open your GitHub repo (atlas-global-chat) -> Add file -> Upload files.
+   Upload all of the updated contents (files and folders) to the ROOT.
+   GitHub will ask to replace existing files; commit the changes.
+   IMPORTANT: include "scripts/fetch-textures.js" and "textures/README.txt".
+3) On Render, keep your EXISTING Web Service (no need to create a second one).
+   Leave Build Command: npm install
+   Leave Start Command: node server.js
+   npm install automatically runs the optional 8K downloader.
+   The site will auto-redeploy if auto-deploy is enabled. Otherwise use
+   Manual Deploy -> Deploy latest commit.
+4) After Live, open https://YOUR-SERVICE.onrender.com/api/texture-status
+   If it reports {"available":true,"missing":[]}, Ultra 8K works.
+   If it reports available:false, the build download failed. See step 5.
+5) FALLBACK (guaranteed if your local 8K installer succeeded):
+   On your Windows computer run OPEN_ATLAS.cmd once to fetch 8K textures.
+   Find the 3 files in "8K ASSETS" in the extracted ATLAS folder.
+   Upload those same 3 .jpg files to your GitHub repository's "textures" folder:
+      textures/8k_earth_daymap.jpg
+      textures/8k_earth_nightmap.jpg
+      textures/8k_earth_clouds.jpg
+   Commit and redeploy. Check /api/texture-status again.
 
-ALTERNATIVE: New > Blueprint and connect the same repo. This copy includes
-render.yaml with Node, Free, npm install, node server.js, and the health check.
+GRAPHICS MODES under the globe:
+- Performance: 30 FPS target, 1x pixel ratio, fewer animation effects
+- Balanced (default): 45 FPS target, 1.5x pixel ratio, embedded high-quality maps
+- Ultra 8K: 60 FPS target, up to 2x pixel ratio, genuine 8192x4096 maps
+Quality settings are saved in your browser.
+The server's 1-second chat cooldown and slur filters remain unchanged.
 
-IMPORTANT:
-- Choose WEB SERVICE, NOT Static Site, because the chat requires Node.
-- Do not open ATLAS Global.html alone from GitHub Pages: chat won't work.
-- The local Windows launcher scripts are not used by Render.
-- A free Render web service spins down after about 15 minutes without inbound
-  traffic; it can take around a minute to restart when someone visits.
-- Chat history and reports are stored in local files. These WILL BE LOST when
-  free Render instances restart, redeploy, or spin down. A permanent database
-  is required for persistent public message history.
-- Built-in slur filtering can miss disguised hateful speech. Reporting is
-  logged, but no separate human moderation dashboard is included.
-- The free tier has shared monthly resource limits; check Render dashboard.
+Technical notes: 8K textures are large, GPU memory-intensive and load on demand.
+Users who select Ultra may experience a download delay. If server assets or
+hardware are unsupported, the site switches back to Balanced rather than
+falsely claiming 8K is active. Render Free may sleep when idle, and chat
+history remains temporary after restarts.
+
+Texture credit: Solar System Scope, licensed CC BY 4.0.
+https://www.solarsystemscope.com/textures/
