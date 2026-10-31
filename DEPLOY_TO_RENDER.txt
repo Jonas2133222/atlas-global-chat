@@ -8,7 +8,7 @@ ATLAS — ULTRA 8K + PERFORMANCE — UPDATE EXISTING RENDER SITE
 3) On Render, keep your EXISTING Web Service (no need to create a second one).
    Leave Build Command: npm install
    Leave Start Command: node server.js
-   npm install automatically runs the optional 8K downloader.
+   npm install automatically runs the multi-source 8K downloader.
    The site will auto-redeploy if auto-deploy is enabled. Otherwise use
    Manual Deploy -> Deploy latest commit.
 4) After Live, open https://YOUR-SERVICE.onrender.com/api/texture-status
@@ -25,8 +25,8 @@ ATLAS — ULTRA 8K + PERFORMANCE — UPDATE EXISTING RENDER SITE
 
 GRAPHICS MODES under the globe:
 - Performance: 30 FPS target, 1x pixel ratio, fewer animation effects
-- Balanced (default): 45 FPS target, 1.5x pixel ratio, embedded high-quality maps
-- Ultra 8K: 60 FPS target, up to 2x pixel ratio, genuine 8192x4096 maps
+- Balanced: 45 FPS target, 1.5x pixel ratio, embedded high-quality maps
+- Ultra 8K (automatic default if supported): 60 FPS target, up to 2x pixel ratio, genuine 8192x4096 maps
 Quality settings are saved in your browser.
 The server's 1-second chat cooldown and slur filters remain unchanged.
 

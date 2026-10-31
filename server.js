@@ -11,8 +11,13 @@ const TEXTURE_FILES = ['8k_earth_daymap.jpg', '8k_earth_nightmap.jpg', '8k_earth
 const TEXTURE_DIR = path.join(__dirname, 'textures');
 function jpegDimensions(filename) {
   try {
-    const data = fs.readFileSync(filename);
-    if (data.length < 130000 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+    // Read only JPEG headers, not the entire 8K image (tens of MB) on each request.
+    const info=fs.statSync(filename);
+    if(info.size<130000)return null;
+    const fd=fs.openSync(filename,'r');
+    const data=Buffer.allocUnsafe(Math.min(info.size,262144));
+    try{fs.readSync(fd,data,0,data.length,0)}finally{fs.closeSync(fd)}
+    if (data[0] !== 0xff || data[1] !== 0xd8) return null;
     let p = 2;
     while (p + 9 < data.length) {
       if (data[p] !== 0xff) { p++; continue; }
@@ -33,6 +38,13 @@ function jpegDimensions(filename) {
 function valid8kTexture(filename) {
   const dimensions = jpegDimensions(path.join(TEXTURE_DIR,filename));
   return !!(dimensions && dimensions.width >= 8000 && dimensions.height >= 4000);
+}
+// Retry 8K downloads after startup if the build encountered a temporary outage.
+let textureLoadPending=false;
+if(TEXTURE_FILES.some(name=>!valid8kTexture(name)) && process.env.ATLAS_SKIP_TEXTURE_DOWNLOAD!=='1'){
+ textureLoadPending=true;
+ const {installTextures}=require('./scripts/fetch-textures.js');
+ installTextures().catch(err=>console.warn('ATLAS 8K runtime fetch:',err.message)).finally(()=>{textureLoadPending=false;});
 }
 const COOLDOWN_MS = 1000;
 const MAX_TEXT = 280;
@@ -212,7 +224,7 @@ function createApp({ dataDir = process.env.ATLAS_DATA_DIR || path.join(__dirname
     }
     if (req.method === 'GET' && pathname === '/api/texture-status') {
       const missing = TEXTURE_FILES.filter(filename => !valid8kTexture(filename));
-      return json(res, 200, {available: missing.length===0, missing});
+      return json(res, 200, {available: missing.length===0, loading: textureLoadPending, missing});
     }
     if (req.method === 'GET' && pathname.startsWith('/textures/')) {
       const filename = pathname.slice('/textures/'.length);

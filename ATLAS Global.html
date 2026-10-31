@@ -245,6 +245,10 @@ html,body{background:#020711}body{font-family:Inter,ui-sans-serif,system-ui,-app
 .atlas-performance .ambient-drift,.atlas-performance .glass:before,.atlas-performance .panel:before,.atlas-performance .planet-stage:after,.atlas-performance .activity-spotlight:before,.atlas-performance .spotlight-graphic span,.atlas-performance .brand-symbol,.atlas-performance .marker-core{animation:none!important}
 .atlas-performance .ambient-drift{filter:none!important;opacity:.25!important}
 @media(max-width:690px){.atlas-graphics span{display:none}.atlas-graphics{padding:0 4px}.atlas-graphics select{max-width:110px;font-size:9px}.globe-footer{flex-wrap:wrap;justify-content:center}}
+
+/* Geographic pins share each WebGL frame and are GPU translated; they do not drift when dragging. */
+.marker-layer .map-marker{left:0;top:0;will-change:transform;transition:opacity .12s linear,filter .2s!important;contain:layout style}
+.marker-layer.is-dragging .map-marker{opacity:0!important;pointer-events:none;transition:opacity .10s ease!important}
 </style>
 </head>
 <body>
@@ -656,12 +660,12 @@ class Globe {
  }
  bindInput(){
   const c=this.canvas;
-  c.addEventListener('pointerdown',e=>{this.dragging=true;c.setPointerCapture(e.pointerId);this.prevX=e.clientX;this.prevY=e.clientY;this.lastInteraction=performance.now();c.classList.add('grabbing')});
+  c.addEventListener('pointerdown',e=>{this.dragging=true;c.setPointerCapture(e.pointerId);this.prevX=e.clientX;this.prevY=e.clientY;this.lastInteraction=performance.now();c.classList.add('grabbing');this.markerLayer.classList.add('is-dragging')});
   c.addEventListener('pointermove',e=>{
    if(!this.dragging)return;const dx=e.clientX-this.prevX,dy=e.clientY-this.prevY;this.prevX=e.clientX;this.prevY=e.clientY;
    this.targetYaw=this.yaw+=dx*.0063;this.targetPitch=this.pitch=Math.max(-1.33,Math.min(1.33,this.pitch+dy*.005));this.resumeAt=performance.now()+4200;
   });
-  const done=()=>{this.dragging=false;c.classList.remove('grabbing');this.resumeAt=performance.now()+4200};
+  const done=()=>{this.dragging=false;c.classList.remove('grabbing');this.markerLayer.classList.remove('is-dragging');this.resumeAt=performance.now()+4200};
   c.addEventListener('pointerup',done);c.addEventListener('pointercancel',done);c.addEventListener('lostpointercapture',done);
   c.addEventListener('wheel',e=>{e.preventDefault();this.targetZoom=Math.max(.7,Math.min(1.34,this.targetZoom-e.deltaY*.0006));this.resumeAt=performance.now()+4000},{passive:false});
   this.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.gpu=null;document.getElementById('globe-unavailable').hidden=false});
@@ -693,9 +697,16 @@ class Globe {
     const embedded=maps.every(k=>window.CNS_ULTRA_TEXTURES?.[k]?.startsWith('data:image/'));
     if(!embedded){
      try{
-      const response=await fetch('/api/texture-status',{cache:'no-store'});
-      const data=await response.json();
-      if(!data.available){if(this.qualityRevision===revision){this.quality='balanced';this.notify?.('8K assets are not installed on this server. Balanced is active.');}return false;}
+      let data={available:false,loading:false};
+      for(let attempt=0;attempt<18;attempt++){
+       const response=await fetch('/api/texture-status',{cache:'no-store'});
+       if(!response.ok)throw new Error('Texture status unavailable');
+       data=await response.json();
+       if(data.available||!data.loading||this.qualityRevision!==revision)break;
+       if(attempt===0)this.notify?.('Preparing 8K Earth textures on the server...');
+       await new Promise(resolve=>setTimeout(resolve,1800));
+      }
+      if(!data.available){if(this.qualityRevision===revision){this.quality='balanced';this.notify?.('Full 8K files could not be downloaded on this server. Using Balanced.');}return false;}
      }catch{if(this.qualityRevision===revision){this.quality='balanced';this.notify?.('Cannot verify 8K textures. Balanced is active.');}return false;}
     }
     if(this.qualityRevision!==revision)return false;
@@ -715,22 +726,31 @@ class Globe {
    return true;
   }
  positionMarkers(){
+  // WebGL sphere and DOM place labels MUST use the same projection, pose and frame.
   const w=this.canvas.clientWidth,h=this.canvas.clientHeight;
+  if(!w||!h)return;
   const cy=Math.cos(this.yaw),sy=Math.sin(this.yaw),cp=Math.cos(this.pitch),sp=Math.sin(this.pitch);
   const scale=h*this.zoom*(innerWidth<700?.86:.96)/2;
-  const locations=[];
+  const visible=[];
   for(const c of cities){
-   const p=geographicVector(c.lat,c.lng),x=p[0]*cy+p[2]*sy,z=-p[0]*sy+p[2]*cy;
-   const y=p[1]*cp-z*sp,zz=p[1]*sp+z*cp;
-   const el=this.markers.get(c.id);el.style.display='none';
-   if(zz<=.15)continue;
-   locations.push({city:c,el,x:w/2+x*scale,y:h/2-y*scale});
+   const p=geographicVector(c.lat,c.lng);
+   const x=p[0]*cy+p[2]*sy,z=-p[0]*sy+p[2]*cy;
+   const y=p[1]*cp-z*sp,depth=p[1]*sp+z*cp;
+   const el=this.markers.get(c.id);
+   // Points on the far side are behind the globe; hide them instead of moving them through it.
+   if(depth<.18){el.style.visibility='hidden';continue;}
+   visible.push({city:c,el,x:w/2+x*scale,y:h/2-y*scale,depth});
   }
-  locations.sort((a,b)=>(b.city.id===this.selected?100:b.city.importance)-(a.city.id===this.selected?100:a.city.importance));
-  const used=[];const minDistance=innerWidth<700?28:50;
-  for(const item of locations){
-   if(used.some(p=>Math.hypot(p.x-item.x,p.y-item.y)<minDistance))continue;
-   item.el.style.display='block';item.el.style.left=`${item.x}px`;item.el.style.top=`${item.y}px`;
+  visible.sort((a,b)=>(b.city.id===this.selected?100:b.city.importance)-(a.city.id===this.selected?100:a.city.importance));
+  const used=[];const minDistance=innerWidth<700?30:52;
+  for(const item of visible){
+   if(used.some(p=>Math.hypot(p.x-item.x,p.y-item.y)<minDistance)){
+    item.el.style.visibility='hidden';continue;
+   }
+   // GPU-composited transform, avoiding left/top reflow and unsynchronized marker jumps.
+   item.el.style.transform=`translate3d(${item.x.toFixed(2)}px,${item.y.toFixed(2)}px,0) translate(-50%,-50%)`;
+   item.el.style.visibility='visible';
+   item.el.style.opacity=String(Math.min(1,(item.depth-.18)*7));
    item.el.classList.toggle('selected',this.selected===item.city.id);
    used.push(item);
   }
@@ -771,7 +791,8 @@ class Globe {
    }
   }
   if(this.raster){const s=subsolarPoint(this.time);this.raster.draw(this.yaw,this.pitch,this.zoom,geographicVector(s.lat,s.lng),this.time,now)}
-   if(now-this.lastMarkerUpdate>=settings.markers){this.positionMarkers();this.lastMarkerUpdate=now}
+   // Keep labels on the exact same animation frame as the globe; never let them trail the surface.
+   this.positionMarkers();
    this.frame=requestAnimationFrame(t=>this.render(t));
  }
  destroy(){this.running=false;cancelAnimationFrame(this.frame);this.destroyStars?.()}
@@ -928,15 +949,15 @@ function initializeRooms(openProfile){
 function restoreProfile(){try{const p=JSON.parse(localStorage.getItem('cns.community.profile'));if(p&&typeof p.name==='string'&&!verifyName(p.name)&&(!p.city||cities.some(c=>c.id===p.city))&&availableRegions.includes(p.region)){state.profile={name:p.name,city:p.city||null,region:p.region};if(p.city)state.selectedCity=p.city;else state.selectedCity=citiesForRegion(p.region)[0].id}}catch{}}
 restoreProfile();buildRegionalClocks();createClocks();const globe=new Globe(el('earth-canvas'),el('marker-layer'),el('starfield'),city=>setCity(city,false));globe.selected=state.selectedCity;globe.notify=toast;const openProfile=initModal();showProfile();initializeRooms(openProfile);el('globe-zoom-in').addEventListener('click',()=>globe.targetZoom=Math.min(1.42,globe.targetZoom+.16));el('globe-zoom-out').addEventListener('click',()=>globe.targetZoom=Math.max(.7,globe.targetZoom-.16));el('globe-reset').addEventListener('click',()=>globe.reset());el('globe-pause').addEventListener('click',()=>{globe.setRotation(!globe.rotating);el('globe-pause').textContent=globe.rotating?'Ⅱ':'▶'});el('time-slider').addEventListener('input',e=>{state.offset=Number(e.target.value);refreshTimes()});el('return-live').addEventListener('click',()=>{state.offset=0;el('time-slider').value='0';refreshTimes()});refreshTimes();setInterval(()=>{refreshTimes();const hud=document.getElementById('hud-utc');if(hud)hud.textContent=new Date().toISOString().slice(11,19);},1000);const hud=document.getElementById('hud-utc');if(hud)hud.textContent=new Date().toISOString().slice(11,19);const qualityEl=el('graphics-quality');
 const embeddedUltra=['day','night','cloud'].every(k=>window.CNS_ULTRA_TEXTURES?.[k]?.startsWith('data:image/'));
-let preferredQuality='balanced';try{preferredQuality=localStorage.getItem('atlas.graphics.quality')|| (embeddedUltra?'ultra':'balanced')}catch{}
+let preferredQuality='ultra';try{preferredQuality=localStorage.getItem('atlas.graphics.quality.v2')||'ultra'}catch{}
 if(!['performance','balanced','ultra'].includes(preferredQuality))preferredQuality='balanced';
 qualityEl.value=preferredQuality;
 (async()=>{if(!await globe.setQuality(preferredQuality))qualityEl.value=globe.quality})();
 qualityEl.addEventListener('change',async()=>{
  const selected=qualityEl.value;
- try{localStorage.setItem('atlas.graphics.quality',selected)}catch{}
+ try{localStorage.setItem('atlas.graphics.quality.v2',selected)}catch{}
  const applied=await globe.setQuality(selected);
- if(!applied){qualityEl.value=globe.quality;try{localStorage.setItem('atlas.graphics.quality',globe.quality)}catch{}}
+ if(!applied){qualityEl.value=globe.quality;try{localStorage.removeItem('atlas.graphics.quality.v2')}catch{}}
  else if(selected==='performance')toast('Performance mode: reduced GPU load · 30 FPS');
  else if(selected==='balanced')toast('Balanced mode: sharp globe · smoother motion');
 });connectChat();
